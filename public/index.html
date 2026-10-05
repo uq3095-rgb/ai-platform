@@ -1,0 +1,149 @@
+import express from 'express';
+import cors from 'cors';
+import dotenv from 'dotenv';
+import { v4 as uuidv4 } from 'uuid';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+dotenv.config();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.use(cors());
+app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
+
+const conversations = new Map();
+const users = new Map();
+const aiModels = [
+  { id: 'gpt-4', name: 'GPT-4 Advanced', type: 'text', speed: 'slow', accuracy: 'very-high' },
+  { id: 'gpt-3.5', name: 'GPT-3.5 Turbo', type: 'text', speed: 'fast', accuracy: 'high' },
+  { id: 'dall-e', name: 'DALL-E 3', type: 'image', speed: 'medium', accuracy: 'high' },
+  { id: 'claude', name: 'Claude 3', type: 'text', speed: 'medium', accuracy: 'very-high' },
+  { id: 'gemini', name: 'Google Gemini', type: 'text', speed: 'fast', accuracy: 'high' }
+];
+
+const aiResponses = {
+  'gpt-4': (prompt) => `GPT-4 Response: ${prompt.substring(0, 100)}... [Advanced Analysis]\n\nهذا رد متقدم يحتوي على تحليل عميق وشامل للمحتوى المطلوب. GPT-4 يوفر دقة عالية جداً في فهم السياق والإجابة على الأسئلة المعقدة.`,
+  'gpt-3.5': (prompt) => `GPT-3.5 Response: ${prompt.substring(0, 100)}... [Quick Analysis]\n\nرد سريع وموثوق يغطي المعلومات الأساسية. مناسب للأسئلة العامة والنقاشات السريعة.`,
+  'dall-e': (prompt) => `Image generated: "${prompt}"\n[Generated Image URL: https://via.placeholder.com/512x512?text=${encodeURIComponent(prompt)}]`,
+  'claude': (prompt) => `Claude Response: ${prompt.substring(0, 100)}... [Thoughtful Analysis]\n\nتحليل متفكر وشامل يركز على الدقة والوضوح. Claude متخصص في المحادثات الطويلة والمعقدة.`,
+  'gemini': (prompt) => `Gemini Response: ${prompt.substring(0, 100)}... [Comprehensive Analysis]\n\nرد شامل يجمع بين السرعة والدقة. Gemini يوفر وجهات نظر متعددة على المشكلة.`
+};
+
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'online', service: 'AI Platform', uptime: process.uptime() });
+});
+
+app.get('/api/models', (req, res) => {
+  res.json({ models: aiModels });
+});
+
+app.post('/api/auth/register', (req, res) => {
+  const { username, email, password } = req.body;
+  if (!username || !email) return res.status(400).json({ error: 'Missing fields' });
+  
+  const userId = uuidv4();
+  const user = {
+    id: userId,
+    username,
+    email,
+    createdAt: new Date(),
+    apiKey: `sk_${uuidv4()}`,
+    conversationCount: 0
+  };
+  users.set(userId, user);
+  res.json({ user, message: 'User created successfully' });
+});
+
+app.post('/api/auth/login', (req, res) => {
+  const { email } = req.body;
+  if (!email) return res.status(400).json({ error: 'Email required' });
+  
+  let user = Array.from(users.values()).find(u => u.email === email);
+  if (!user) {
+    const userId = uuidv4();
+    user = {
+      id: userId,
+      username: email.split('@')[0],
+      email,
+      createdAt: new Date(),
+      apiKey: `sk_${uuidv4()}`,
+      conversationCount: 0
+    };
+    users.set(userId, user);
+  }
+  res.json({ user, token: `token_${uuidv4()}` });
+});
+
+app.post('/api/conversations', (req, res) => {
+  const { userId, title } = req.body;
+  const conversationId = uuidv4();
+  const conversation = {
+    id: conversationId,
+    userId,
+    title: title || 'New Conversation',
+    messages: [],
+    createdAt: new Date(),
+    model: 'gpt-3.5'
+  };
+  conversations.set(conversationId, conversation);
+  res.json({ conversation });
+});
+
+app.get('/api/conversations/:userId', (req, res) => {
+  const { userId } = req.params;
+  const userConversations = Array.from(conversations.values())
+    .filter(c => c.userId === userId)
+    .sort((a, b) => b.createdAt - a.createdAt);
+  res.json({ conversations: userConversations });
+});
+
+app.post('/api/conversations/:conversationId/messages', (req, res) => {
+  const { conversationId } = req.params;
+  const { message, model } = req.body;
+  
+  const conversation = conversations.get(conversationId);
+  if (!conversation) return res.status(404).json({ error: 'Conversation not found' });
+  
+  conversation.model = model || conversation.model;
+  const userMsg = { id: uuidv4(), role: 'user', content: message, timestamp: new Date() };
+  conversation.messages.push(userMsg);
+  
+  const aiResponse = aiResponses[model] ? aiResponses[model](message) : aiResponses['gpt-3.5'](message);
+  const assistantMsg = { id: uuidv4(), role: 'assistant', content: aiResponse, timestamp: new Date() };
+  conversation.messages.push(assistantMsg);
+  
+  res.json({ message: assistantMsg, conversation });
+});
+
+app.get('/api/conversations/:conversationId', (req, res) => {
+  const { conversationId } = req.params;
+  const conversation = conversations.get(conversationId);
+  if (!conversation) return res.status(404).json({ error: 'Conversation not found' });
+  res.json({ conversation });
+});
+
+app.get('/api/stats', (req, res) => {
+  res.json({
+    totalUsers: users.size,
+    totalConversations: conversations.size,
+    totalMessages: Array.from(conversations.values()).reduce((sum, c) => sum + c.messages.length, 0),
+    modelsAvailable: aiModels.length,
+    apiStatus: 'operational',
+    timestamp: new Date()
+  });
+});
+
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+app.listen(PORT, () => {
+  console.log(`✅ AI Platform running on http://localhost:${PORT}`);
+  console.log(`📊 Models available: ${aiModels.length}`);
+});

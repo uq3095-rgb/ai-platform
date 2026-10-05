@@ -1,2 +1,2 @@
-# ai-platform
-AI Generation Platform - Advanced AI Platform with Web Dashboard
+PORT=3000
+NODE_ENV=development
